@@ -1,0 +1,12 @@
+{
+  "name": "bravo-futevolei",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cadastro de alunos e reservas para a Bravo Futevôlei",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
