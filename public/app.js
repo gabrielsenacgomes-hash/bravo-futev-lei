@@ -76,7 +76,7 @@ async function loadPublicAvailability() {
   const date = $('bookingDate').value;
   if (!date) return;
   if (!REMOTE) { renderAvailable(); return; }
-  if (!studentAuthenticated || !studentProfile?.active) { remoteAvailability = []; renderAvailable(); return; }
+  if (!studentAuthenticated || !studentProfile) { remoteAvailability = []; renderAvailable(); return; }
   try {
     const response = await fetch('/api/student/slots?date=' + encodeURIComponent(date));
     const data = await response.json();
@@ -106,7 +106,7 @@ function applyStudentStatus() {
   if (avatar && initialsNode) { avatar.hidden = !studentProfile?.photoDataUrl; avatar.src = studentProfile?.photoDataUrl || ''; initialsNode.hidden = !!studentProfile?.photoDataUrl; initialsNode.textContent = initials(studentProfile?.name); }
   if ($('removeStudentPhoto')) $('removeStudentPhoto').hidden = !studentProfile?.photoDataUrl;
   $('planNotice').hidden = active; $('planNotice').textContent = studentProfile?.message || '';
-  $('scheduleCard').hidden = !active;
+  $('scheduleCard').hidden = REMOTE && !studentAuthenticated;
   $('bookingView').querySelector('.booking-layout').style.gridTemplateColumns = active ? '' : '1fr';
   if (REMOTE) { $('studentName').required = false; $('studentPhone').required = false; $('localStudentFields').hidden = true; }
   else $('localStudentFields').hidden = false;
@@ -169,7 +169,7 @@ function renderAvailable() {
   const date = $('bookingDate').value;
   if (!date) return;
   let entries;
-  if (REMOTE) entries = studentProfile?.active ? remoteAvailability : [];
+  if (REMOTE) entries = studentAuthenticated ? remoteAvailability : [];
   else {
     const day = new Date(date + 'T12:00:00').getDay();
     entries = slots.filter(slot => slot.open && Number(slot.day) === day).sort((a, b) => a.start.localeCompare(b.start))
@@ -181,9 +181,9 @@ function renderAvailable() {
     const participantList = participants.length
       ? `<div class="slot-participants" aria-label="Alunos confirmados">${participants.map(person => `<div class="slot-participant">${avatarMarkup(person, 'participant-avatar')}<span>${esc(person.name)}</span></div>`).join('')}</div>`
       : (REMOTE ? '<small class="no-participants">Ainda sem alunos confirmados</small>' : '');
-    const full = slot.remaining <= 0;
-    const card = `<b>${slot.start} – ${slot.end}</b><small>${dayNames[slot.day]}</small>${participantList}<div class="seat">${full ? 'Treino lotado' : `${slot.remaining} ${slot.remaining === 1 ? 'vaga' : 'vagas'} restantes`}</div>`;
-    return full && REMOTE ? `<div class="slot-card disabled">${card}</div>`
+    const full = slot.remaining <= 0, locked = REMOTE && !studentProfile?.active;
+    const card = `<b>${slot.start} – ${slot.end}</b><small>${dayNames[slot.day]}</small>${participantList}<div class="seat">${full ? 'Treino lotado' : locked ? 'Reserva bloqueada pelo plano' : `${slot.remaining} ${slot.remaining === 1 ? 'vaga' : 'vagas'} restantes`}</div>`;
+    return (full || locked) && REMOTE ? `<div class="slot-card disabled">${card}</div>`
       : `<button type="button" class="slot-card ${selectedSlotId === slot.id ? 'chosen' : ''}" onclick="chooseSlot('${slot.id}')">${card}</button>`;
   }).join('');
   $('noSlots').hidden = entries.length > 0;

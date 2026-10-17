@@ -249,7 +249,6 @@ const server = http.createServer(async (req, res) => {
       if (!dateIsValid(date) || date < todayInBrazil()) return json(res, 400, { error: 'Escolha uma data válida.' });
       const data = readData(), student = data.students.find(item => item.id === session.studentId);
       if (!student) return json(res, 401, { error: 'Cadastro não encontrado.' });
-      if (!isStudentActive(student)) return json(res, 403, { code: 'PLAN_INACTIVE', error: studentStatusMessage(student) });
       const day = new Date(date + 'T12:00:00Z').getUTCDay();
       const available = data.slots.filter(slot => slot.open && Number(slot.day) === day).map(slot => {
         const matches = data.bookings.filter(b => b.date === date && b.slotId === slot.id);
