@@ -18,6 +18,16 @@ try {
   bookings = JSON.parse(localStorage.getItem(STORAGE.bookings) || '[]');
 } catch { /* Start with empty records if local browser storage is unreadable. */ }
 
+function initials(name) {
+  return String(name || '?').trim().split(/\s+/).slice(0, 2).map(word => word[0] || '').join('').toUpperCase() || '?';
+}
+function avatarMarkup(person, className = 'avatar') {
+  const label = esc(person.name || 'Aluno');
+  return person.photoDataUrl
+    ? `<div class="${className}"><img src="${esc(person.photoDataUrl)}" alt="Foto de ${label}" loading="lazy"></div>`
+    : `<div class="${className}" aria-label="${label}">${esc(initials(person.name))}</div>`;
+}
+
 function isoToday() {
   const now = new Date();
   return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
@@ -92,6 +102,9 @@ async function loadStudentBookings() {
 function applyStudentStatus() {
   const active = !REMOTE || !!studentProfile?.active;
   $('studentDisplayName').textContent = studentProfile?.name || '';
+  const avatar = $('studentProfilePhoto'), initialsNode = $('studentAvatarInitials');
+  if (avatar && initialsNode) { avatar.hidden = !studentProfile?.photoDataUrl; avatar.src = studentProfile?.photoDataUrl || ''; initialsNode.hidden = !!studentProfile?.photoDataUrl; initialsNode.textContent = initials(studentProfile?.name); }
+  if ($('removeStudentPhoto')) $('removeStudentPhoto').hidden = !studentProfile?.photoDataUrl;
   $('planNotice').hidden = active; $('planNotice').textContent = studentProfile?.message || '';
   $('scheduleCard').hidden = !active;
   $('bookingView').querySelector('.booking-layout').style.gridTemplateColumns = active ? '' : '1fr';
@@ -124,7 +137,7 @@ function render() {
     const account = studentAccounts.find(item => item.studentId === student.id);
     const accountLabel = account?.hasAccount ? 'Conta criada' : (student.email ? 'Pode se cadastrar' : 'Cadastre e-mail');
     return `<tr>
-    <td><div class="person"><div class="avatar">${esc(student.name.trim().split(/\s+/).slice(0, 2).map(word => word[0]).join('').toUpperCase())}</div><div><b>${esc(student.name)}</b><small>${esc(student.email || 'Sem e-mail')}</small></div></div></td>
+    <td><div class="person">${avatarMarkup(student)}<div><b>${esc(student.name)}</b><small>${esc(student.email || 'Sem e-mail')}</small></div></div></td>
     <td>${esc(student.phone)}</td><td>${esc(student.plan)}</td><td>${esc(student.schedule || '—')}</td><td>${student.fee ? money(student.fee) : '—'}</td>
     <td>${student.expiresAt ? formatDate(student.expiresAt) : '—'}</td>
     <td><span class="pill ${status === 'Ativo' ? 'active' : status === 'Experimental' ? 'trial' : 'paused'}">${esc(status)}</span></td>
@@ -156,14 +169,23 @@ function renderAvailable() {
   const date = $('bookingDate').value;
   if (!date) return;
   let entries;
-  if (REMOTE) entries = studentProfile?.active ? remoteAvailability.filter(slot => slot.remaining > 0) : [];
+  if (REMOTE) entries = studentProfile?.active ? remoteAvailability : [];
   else {
     const day = new Date(date + 'T12:00:00').getDay();
     entries = slots.filter(slot => slot.open && Number(slot.day) === day).sort((a, b) => a.start.localeCompare(b.start))
       .map(slot => ({ ...slot, remaining: slot.capacity - bookings.filter(item => item.date === date && item.slotId === slot.id).length }))
       .filter(slot => slot.remaining > 0);
   }
-  $('availableSlots').innerHTML = entries.map(slot => `<button type="button" class="slot-card ${selectedSlotId === slot.id ? 'chosen' : ''}" onclick="chooseSlot('${slot.id}')"><b>${slot.start} – ${slot.end}</b><small>${dayNames[slot.day]}</small><div class="seat">${slot.remaining} ${slot.remaining === 1 ? 'vaga' : 'vagas'} restantes</div></button>`).join('');
+  $('availableSlots').innerHTML = entries.map(slot => {
+    const participants = REMOTE ? (slot.participants || []) : [];
+    const participantList = participants.length
+      ? `<div class="slot-participants" aria-label="Alunos confirmados">${participants.map(person => `<div class="slot-participant">${avatarMarkup(person, 'participant-avatar')}<span>${esc(person.name)}</span></div>`).join('')}</div>`
+      : (REMOTE ? '<small class="no-participants">Ainda sem alunos confirmados</small>' : '');
+    const full = slot.remaining <= 0;
+    const card = `<b>${slot.start} – ${slot.end}</b><small>${dayNames[slot.day]}</small>${participantList}<div class="seat">${full ? 'Treino lotado' : `${slot.remaining} ${slot.remaining === 1 ? 'vaga' : 'vagas'} restantes`}</div>`;
+    return full && REMOTE ? `<div class="slot-card disabled">${card}</div>`
+      : `<button type="button" class="slot-card ${selectedSlotId === slot.id ? 'chosen' : ''}" onclick="chooseSlot('${slot.id}')">${card}</button>`;
+  }).join('');
   $('noSlots').hidden = entries.length > 0;
 }
 
@@ -262,6 +284,32 @@ window.loginStudent = async event => {
   } catch (error) { $('studentAuthError').textContent = error.message; }
 };
 
+window.uploadStudentPhoto = async event => {
+  const input = event.target, file = input.files?.[0]; if (!file) return;
+  let source;
+  try {
+    if (!file.type.startsWith('image/')) throw new Error('Escolha uma imagem.');
+    if (file.size > 12000000) throw new Error('A imagem original precisa ter até 12 MB.');
+    source = URL.createObjectURL(file); const image = new Image(); image.src = source;
+    await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = () => reject(new Error('Não foi possível abrir essa imagem.')); });
+    const scale = Math.min(1, 400 / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement('canvas'); canvas.width = Math.max(1, Math.round(image.naturalWidth * scale)); canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+    const photoDataUrl = canvas.toDataURL('image/jpeg', 0.78);
+    const response = await fetch('/api/student/photo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ photoDataUrl }) });
+    const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Não foi possível salvar a foto.');
+    studentProfile = data.student; applyStudentStatus(); await loadPublicAvailability(); showToast('Foto de perfil atualizada.');
+  } catch (error) { showToast(error.message || 'Não foi possível salvar a foto.'); }
+  finally { if (source) URL.revokeObjectURL(source); input.value = ''; }
+};
+window.removeStudentPhoto = async () => {
+  try {
+    const response = await fetch('/api/student/photo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ photoDataUrl: '' }) });
+    const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Não foi possível remover a foto.');
+    studentProfile = data.student; applyStudentStatus(); await loadPublicAvailability(); showToast('Foto de perfil removida.');
+  } catch (error) { showToast(error.message || 'Não foi possível remover a foto.'); }
+};
+
 window.shareStudentLink = async () => {
   if (!REMOTE) { showToast('O link do aluno estará pronto quando o site estiver publicado.'); return; }
   const link = `${location.origin}${location.pathname}?aluno`;
@@ -272,7 +320,8 @@ window.shareStudentLink = async () => {
 $('studentForm').addEventListener('submit', event => {
   event.preventDefault();
   const id = $('studentId').value;
-  const student = { id: id || crypto.randomUUID(), ...Object.fromEntries(['name', 'phone', 'email', 'plan', 'fee', 'schedule', 'status', 'notes', 'expiresAt'].map(key => [key, $(key).value.trim()])) };
+  const existingStudent = students.find(item => item.id === id);
+  const student = { id: id || crypto.randomUUID(), ...(existingStudent?.photoDataUrl ? { photoDataUrl: existingStudent.photoDataUrl } : {}), ...Object.fromEntries(['name', 'phone', 'email', 'plan', 'fee', 'schedule', 'status', 'notes', 'expiresAt'].map(key => [key, $(key).value.trim()])) };
   const index = students.findIndex(item => item.id === id);
   if (index < 0) students.unshift(student); else students[index] = student;
   persist(); closeForm(); showToast(index < 0 ? 'Aluno cadastrado com sucesso.' : 'Cadastro atualizado.');
@@ -307,6 +356,8 @@ $('studentRegisterForm').addEventListener('submit', registerStudent);
 $('studentLoginTab').onclick = () => setStudentAuthMode('login');
 $('studentRegisterTab').onclick = () => setStudentAuthMode('register');
 $('studentLogout').onclick = studentLogout;
+$('studentPhotoUpload').addEventListener('change', uploadStudentPhoto);
+$('removeStudentPhoto').onclick = removeStudentPhoto;
 $('schoolLoginLink').onclick = () => switchMode('admin');
 $('bookingForm').addEventListener('submit', async event => {
   event.preventDefault();

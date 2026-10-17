@@ -68,6 +68,17 @@ body:has(#studentGate:not([hidden])) #studentGate>.hero h1{color:#fff}
 body:has(#studentGate:not([hidden])) #studentGate>.hero p.sub{color:#e1eee5;line-height:1.55}
 .school-access{display:block;margin:14px auto 0;border:0;background:transparent;color:var(--muted);font:600 11px 'DM Sans';text-decoration:underline;cursor:pointer}
 
+.avatar img,.participant-avatar img,.student-profile-avatar img{width:100%;height:100%;object-fit:cover;border-radius:inherit;display:block}
+.student-profile-controls{display:flex;align-items:center;gap:9px;margin:0 0 3px}
+.student-profile-avatar{width:48px;height:48px;border-radius:50%;overflow:hidden;display:grid;place-items:center;background:#dcebdc;color:#174a36;font-weight:800;font-size:15px;border:2px solid #ffffff88}
+.student-photo-button,.remove-photo-button{display:inline-block;border:1px solid #ffffff55;border-radius:9px;background:#ffffff12;padding:6px 8px;color:white;font:600 10px 'DM Sans';cursor:pointer}
+.remove-photo-button[hidden],.student-profile-avatar img[hidden]{display:none}
+.slot-participants{display:grid;gap:6px;margin:10px 0 5px}
+.slot-participant{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--ink)}
+.participant-avatar{width:25px;height:25px;flex:0 0 25px;border-radius:50%;overflow:hidden;display:grid;place-items:center;background:#e7efdc;color:var(--green);font-weight:700;font-size:9px}
+.no-participants{font-size:10px!important;color:var(--muted);margin:10px 0 5px!important}
+.slot-card.disabled{background:#f6f7f2}
+@media(max-width:600px){.slot-participants{gap:5px}.student-profile-avatar{width:42px;height:42px}}
 </style>
 </head>
 <body>
@@ -106,10 +117,10 @@ body:has(#studentGate:not([hidden])) #studentGate>.hero p.sub{color:#e1eee5;line
   </section>
  </section>
  <section class="student-only" id="bookingView" hidden>
-  <div class="hero student-booking-hero"><div><p class="eyebrow">Bravo Futevôlei</p><h1>Marque sua aula.</h1><p class="sub">Escolha um dos horários que a equipe deixou aberto para reserva.</p></div><div class="student-account"><span>Olá,</span><b id="studentDisplayName"></b><small id="accountPlan"></small><small id="accountExpiry"></small><button id="studentLogout" type="button">Sair da conta</button></div></div>
+  <div class="hero student-booking-hero"><div><p class="eyebrow">Bravo Futevôlei</p><h1>Marque sua aula.</h1><p class="sub">Escolha um dos horários que a equipe deixou aberto para reserva.</p></div><div class="student-account"><div class="student-profile-controls"><div class="student-profile-avatar"><span id="studentAvatarInitials"></span><img id="studentProfilePhoto" alt="Sua foto de perfil" hidden></div><label class="student-photo-button" for="studentPhotoUpload">Adicionar/alterar foto</label><input id="studentPhotoUpload" type="file" accept="image/*" hidden><button class="remove-photo-button" id="removeStudentPhoto" type="button" hidden>Remover</button></div><span>Olá,</span><b id="studentDisplayName"></b><small id="accountPlan"></small><small id="accountExpiry"></small><button id="studentLogout" type="button">Sair da conta</button></div></div>
   <div class="plan-notice" id="planNotice" role="status" hidden></div>
   <div class="booking-layout">
-   <section class="panel booking-card" id="scheduleCard"><h2>Escolha seu horário</h2><p>Veja somente os horários abertos pela Bravo e com vagas restantes.</p>
+   <section class="panel booking-card" id="scheduleCard"><h2>Escolha seu horário</h2><p>Veja os horários abertos, as vagas e quem já confirmou presença.</p>
     <div class="field booking-date"><label for="bookingDate">Data da aula</label><input id="bookingDate" type="date"></div>
     <div id="availableSlots" class="slots-grid"></div><div class="empty" id="noSlots" hidden><strong>Sem horários abertos para este dia</strong>Escolha outra data para consultar a agenda.</div>
     <div class="notice">A reserva ocupa uma vaga do horário escolhido. A agenda é atualizada pela equipe da Bravo.</div>

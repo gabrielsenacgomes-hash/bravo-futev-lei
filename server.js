@@ -79,7 +79,7 @@ function studentStatusMessage(student) {
 function studentSummary(student) {
   const active = isStudentActive(student);
   return { id: student.id, name: student.name, email: student.email, plan: student.plan, status: student.status,
-    expiresAt: student.expiresAt || '', active, message: active ? '' : studentStatusMessage(student) };
+    expiresAt: student.expiresAt || '', photoDataUrl: student.photoDataUrl || '', active, message: active ? '' : studentStatusMessage(student) };
 }
 function setSession(res, req, role, studentId = '') {
   const token = crypto.randomBytes(32).toString('base64url');
@@ -218,6 +218,22 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { authenticated: true, student: studentSummary(student) });
     }
 
+    if (req.method === 'POST' && route === '/api/student/photo') {
+      const session = requireStudent(req, res); if (!session) return;
+      const body = await readBody(req), photoDataUrl = String(body.photoDataUrl || '');
+      if (photoDataUrl) {
+        const match = photoDataUrl.match(/^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/);
+        if (!match) return json(res, 400, { error: 'Envie uma foto JPG válida.' });
+        const bytes = Buffer.from(match[1], 'base64');
+        if (bytes.length < 100 || bytes.length > 150000 || bytes.toString('base64') !== match[1] || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff)
+          return json(res, 400, { error: 'A foto precisa ser JPG e ter até 150 KB depois da redução.' });
+      }
+      const data = readData(), student = data.students.find(item => item.id === session.studentId);
+      if (!student) return json(res, 401, { error: 'Cadastro não encontrado.' });
+      student.photoDataUrl = photoDataUrl; saveData(data);
+      return json(res, 200, { student: studentSummary(student) });
+    }
+
     if (req.method === 'GET' && route === '/api/student/bookings') {
       const session = requireStudent(req, res); if (!session) return;
       const data = readData(), student = data.students.find(item => item.id === session.studentId);
@@ -236,10 +252,14 @@ const server = http.createServer(async (req, res) => {
       if (!isStudentActive(student)) return json(res, 403, { code: 'PLAN_INACTIVE', error: studentStatusMessage(student) });
       const day = new Date(date + 'T12:00:00Z').getUTCDay();
       const available = data.slots.filter(slot => slot.open && Number(slot.day) === day).map(slot => {
-        const used = data.bookings.filter(b => b.date === date && b.slotId === slot.id).length;
+        const matches = data.bookings.filter(b => b.date === date && b.slotId === slot.id);
+        const participants = matches.map(booking => {
+          const bookedStudent = data.students.find(item => item.id === booking.studentId || phoneDigits(item.phone) === phoneDigits(booking.phone));
+          return { name: bookedStudent?.name || booking.name || 'Aluno', photoDataUrl: bookedStudent?.photoDataUrl || '' };
+        });
         return { id: slot.id, day: Number(slot.day), start: slot.start, end: slot.end, capacity: Number(slot.capacity),
-          remaining: Math.max(0, Number(slot.capacity) - used) };
-      }).filter(slot => slot.remaining > 0).sort((a, b) => a.start.localeCompare(b.start));
+          remaining: Math.max(0, Number(slot.capacity) - matches.length), participants };
+      }).sort((a, b) => a.start.localeCompare(b.start));
       return json(res, 200, { slots: available });
     }
 
