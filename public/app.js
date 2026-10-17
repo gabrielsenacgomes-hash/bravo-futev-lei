@@ -9,7 +9,8 @@ const digits = value => String(value || '').replace(/\D/g, '');
 const esc = value => String(value || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 let students = [], slots = [], bookings = [], remoteAvailability = [], selectedSlotId = '';
-let adminAuthenticated = !REMOTE;
+let adminAuthenticated = !REMOTE, studentAuthenticated = !REMOTE;
+let studentProfile = null, studentBookings = [], studentAccounts = [];
 let saveQueue = Promise.resolve();
 try {
   students = JSON.parse(localStorage.getItem(STORAGE.students) || '[]');
@@ -55,6 +56,7 @@ async function loadAdminState() {
   students = data.students || [];
   slots = data.slots || [];
   bookings = data.bookings || [];
+  studentAccounts = data.studentAccounts || [];
   adminAuthenticated = true;
   cacheLocally();
   render();
@@ -64,41 +66,74 @@ async function loadPublicAvailability() {
   const date = $('bookingDate').value;
   if (!date) return;
   if (!REMOTE) { renderAvailable(); return; }
+  if (!studentAuthenticated || !studentProfile?.active) { remoteAvailability = []; renderAvailable(); return; }
   try {
-    const response = await fetch('/api/public/slots?date=' + encodeURIComponent(date));
+    const response = await fetch('/api/student/slots?date=' + encodeURIComponent(date));
     const data = await response.json();
+    if (response.status === 401) { studentAuthenticated = false; switchMode('student'); return; }
+    if (response.status === 403) {
+      studentProfile.active = false; studentProfile.message = data.error || 'Seu plano está inativo.';
+      applyStudentStatus(); remoteAvailability = []; renderAvailable(); return;
+    }
+    if (!response.ok) throw new Error(data.error || 'Não foi possível carregar a agenda.');
     remoteAvailability = data.slots || [];
     if (!remoteAvailability.some(slot => slot.id === selectedSlotId)) selectedSlotId = '';
     renderAvailable();
   } catch {
-    remoteAvailability = [];
-    renderAvailable();
-    showToast('Não foi possível carregar a agenda agora.');
+    remoteAvailability = []; renderAvailable(); showToast('Não foi possível carregar a agenda agora.');
   }
+}
+async function loadStudentBookings() {
+  if (!REMOTE || !studentAuthenticated) return;
+  const response = await fetch('/api/student/bookings');
+  if (response.status === 401) { studentAuthenticated = false; switchMode('student'); return; }
+  const data = await response.json(); studentBookings = data.bookings || []; renderMyBookings();
+}
+function applyStudentStatus() {
+  const active = !REMOTE || !!studentProfile?.active;
+  $('studentDisplayName').textContent = studentProfile?.name || '';
+  $('planNotice').hidden = active; $('planNotice').textContent = studentProfile?.message || '';
+  $('scheduleCard').hidden = !active;
+  $('bookingView').querySelector('.booking-layout').style.gridTemplateColumns = active ? '' : '1fr';
+  if (REMOTE) { $('studentName').required = false; $('studentPhone').required = false; $('localStudentFields').hidden = true; }
+  else $('localStudentFields').hidden = false;
+  $('accountPlan').textContent = studentProfile?.plan || '';
+  $('accountExpiry').textContent = studentProfile?.expiresAt ? 'Válido até ' + formatDate(studentProfile.expiresAt) : (studentProfile ? 'Plano sem data de vencimento' : '');
+  if (!active) { remoteAvailability = []; selectedSlotId = ''; renderAvailable(); }
+}
+async function loadStudentSession() {
+  if (!REMOTE) return true;
+  const response = await fetch('/api/student/session');
+  if (!response.ok) { studentAuthenticated = false; studentProfile = null; return false; }
+  const data = await response.json(); studentProfile = data.student; studentAuthenticated = true;
+  applyStudentStatus(); await loadStudentBookings(); return true;
 }
 
 function render() {
-  const query = $('search').value.toLowerCase();
-  const filter = $('filter').value;
-  const list = students.filter(student => (filter === 'all' || student.status === filter) &&
+  const query = $('search').value.toLowerCase(), filter = $('filter').value;
+  const list = students.filter(student => (filter === 'Inativo' ? (student.status !== 'Ativo' || (!!student.expiresAt && student.expiresAt < isoToday())) : (filter === 'all' || student.status === filter)) &&
     `${student.name} ${student.phone} ${student.email} ${student.plan}`.toLowerCase().includes(query));
-  $('total').textContent = students.length;
-  $('active').textContent = students.filter(student => student.status === 'Ativo').length;
+  const activeStudents = students.filter(student => student.status === 'Ativo' && (!student.expiresAt || student.expiresAt >= isoToday()));
+  $('total').textContent = students.length; $('active').textContent = activeStudents.length;
   $('trial').textContent = students.filter(student => student.status === 'Experimental').length;
-  $('revenue').innerHTML = money(students.filter(student => student.status === 'Ativo')
-    .reduce((total, student) => total + (Number(student.fee) || 0), 0)) + '<small>estimado</small>';
+  $('revenue').innerHTML = money(activeStudents.reduce((total, student) => total + (Number(student.fee) || 0), 0)) + '<small>estimado</small>';
   $('countLabel').textContent = `${list.length} ${list.length === 1 ? 'aluno' : 'alunos'}`;
-  $('rows').innerHTML = list.map(student => `<tr>
+  $('rows').innerHTML = list.map(student => {
+    const expired = !!student.expiresAt && student.expiresAt < isoToday();
+    const status = expired || student.status === 'Pausado' ? 'Inativo' : student.status;
+    const account = studentAccounts.find(item => item.studentId === student.id);
+    const accountLabel = account?.hasAccount ? 'Conta criada' : (student.email ? 'Pode se cadastrar' : 'Cadastre e-mail');
+    return `<tr>
     <td><div class="person"><div class="avatar">${esc(student.name.trim().split(/\s+/).slice(0, 2).map(word => word[0]).join('').toUpperCase())}</div><div><b>${esc(student.name)}</b><small>${esc(student.email || 'Sem e-mail')}</small></div></div></td>
     <td>${esc(student.phone)}</td><td>${esc(student.plan)}</td><td>${esc(student.schedule || '—')}</td><td>${student.fee ? money(student.fee) : '—'}</td>
-    <td><span class="pill ${student.status === 'Ativo' ? 'active' : student.status === 'Experimental' ? 'trial' : 'paused'}">${esc(student.status)}</span></td>
+    <td>${student.expiresAt ? formatDate(student.expiresAt) : '—'}</td>
+    <td><span class="pill ${status === 'Ativo' ? 'active' : status === 'Experimental' ? 'trial' : 'paused'}">${esc(status)}</span></td>
+    <td><small class="account-state">${accountLabel}</small></td>
     <td><div class="row-actions"><button class="icon-btn" title="Editar" aria-label="Editar ${esc(student.name)}" onclick="editStudent('${student.id}')">✎</button><button class="icon-btn" title="Excluir" aria-label="Excluir ${esc(student.name)}" onclick="deleteStudent('${student.id}')">⌫</button></div></td>
-  </tr>`).join('');
+  </tr>`;
+  }).join('');
   $('empty').hidden = list.length > 0;
-  renderSlotsAdmin();
-  renderBookingsAdmin();
-  renderAvailable();
-  renderMyBookings();
+  renderSlotsAdmin(); renderBookingsAdmin(); renderAvailable(); renderMyBookings();
 }
 
 function renderSlotsAdmin() {
@@ -121,28 +156,27 @@ function renderAvailable() {
   const date = $('bookingDate').value;
   if (!date) return;
   let entries;
-  if (REMOTE) entries = remoteAvailability.filter(slot => slot.remaining > 0);
+  if (REMOTE) entries = studentProfile?.active ? remoteAvailability.filter(slot => slot.remaining > 0) : [];
   else {
     const day = new Date(date + 'T12:00:00').getDay();
-    entries = slots.filter(slot => slot.day === day && slot.open).sort((a, b) => a.start.localeCompare(b.start))
+    entries = slots.filter(slot => slot.open && Number(slot.day) === day).sort((a, b) => a.start.localeCompare(b.start))
       .map(slot => ({ ...slot, remaining: slot.capacity - bookings.filter(item => item.date === date && item.slotId === slot.id).length }))
       .filter(slot => slot.remaining > 0);
   }
   $('availableSlots').innerHTML = entries.map(slot => `<button type="button" class="slot-card ${selectedSlotId === slot.id ? 'chosen' : ''}" onclick="chooseSlot('${slot.id}')"><b>${slot.start} – ${slot.end}</b><small>${dayNames[slot.day]}</small><div class="seat">${slot.remaining} ${slot.remaining === 1 ? 'vaga' : 'vagas'} restantes</div></button>`).join('');
   $('noSlots').hidden = entries.length > 0;
 }
+
 function renderMyBookings() {
   if (REMOTE) {
-    $('myBookings').className = 'empty';
-    $('myBookings').style.padding = '20px 0';
-    $('myBookings').textContent = 'Para consultar ou alterar uma reserva, fale com a equipe da Bravo.';
+    $('myBookings').className = studentBookings.length ? '' : 'empty';
+    $('myBookings').style.padding = studentBookings.length ? '' : '20px 0';
+    $('myBookings').innerHTML = studentBookings.length
+      ? studentBookings.map(item => `<div class="booking-item"><span><b>${formatDate(item.date)}</b><br>${item.start}–${item.end}</span><span>Reservada ✓</span></div>`).join('')
+      : 'Você não tem próximas aulas reservadas.';
     return;
   }
-  const phone = digits($('studentPhone').value);
-  if (phone.length < 10) {
-    $('myBookings').className = 'empty'; $('myBookings').style.padding = '20px 0';
-    $('myBookings').textContent = 'Digite seu WhatsApp para consultar as aulas reservadas.'; return;
-  }
+  const phone = digits($('studentPhone')?.value);
   const mine = bookings.filter(item => digits(item.phone) === phone && item.date >= isoToday()).sort((a, b) => a.date.localeCompare(b.date));
   $('myBookings').className = mine.length ? '' : 'empty';
   $('myBookings').style.padding = mine.length ? '' : '20px 0';
@@ -152,14 +186,14 @@ function renderMyBookings() {
 function openForm(student) {
   $('studentForm').reset(); $('studentId').value = student?.id || '';
   $('formTitle').textContent = student ? 'Editar aluno' : 'Novo aluno';
-  if (student) for (const key of ['name', 'phone', 'email', 'plan', 'fee', 'schedule', 'status', 'notes']) $(key).value = student[key] || '';
+  if (student) for (const key of ['name', 'phone', 'email', 'plan', 'fee', 'schedule', 'status', 'notes', 'expiresAt']) $(key).value = key === 'status' && student[key] === 'Pausado' ? 'Inativo' : (student[key] || '');
   $('modalBack').classList.add('open'); $('name').focus();
 }
 function closeForm() { $('modalBack').classList.remove('open'); }
 window.editStudent = id => { const student = students.find(item => item.id === id); if (student) openForm(student); };
 window.deleteStudent = id => {
   const student = students.find(item => item.id === id);
-  if (student && confirm(`Excluir o cadastro de ${student.name}?`)) {
+  if (student && confirm(`Excluir o cadastro de ${student.name}? O acesso e as reservas dessa conta também deixarão de funcionar.`)) {
     students = students.filter(item => item.id !== id); persist(); showToast('Cadastro removido.');
   }
 };
@@ -182,15 +216,52 @@ window.cancelBooking = async id => {
 window.switchMode = mode => {
   if (mode === 'admin' && REMOTE && !adminAuthenticated) { $('loginBack').classList.add('open'); return; }
   document.querySelectorAll('.admin-only').forEach(element => { element.style.display = mode === 'admin' ? '' : 'none'; });
-  $('bookingView').hidden = mode !== 'student';
-  $('adminTab').classList.toggle('selected', mode === 'admin');
-  $('studentTab').classList.toggle('selected', mode === 'student');
+  $('adminTab').classList.toggle('selected', mode === 'admin'); $('studentTab').classList.toggle('selected', mode === 'student');
   if (mode === 'student') {
     $('bookingDate').min = isoToday();
     if (!$('bookingDate').value || $('bookingDate').value < isoToday()) $('bookingDate').value = isoToday();
-    selectedSlotId = ''; loadPublicAvailability(); renderMyBookings(); window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
+    if (REMOTE && !studentAuthenticated) { $('studentGate').hidden = false; $('bookingView').hidden = true; }
+    else {
+      $('studentGate').hidden = true; $('bookingView').hidden = false;
+      if (studentProfile || !REMOTE) applyStudentStatus();
+      selectedSlotId = ''; loadPublicAvailability(); renderMyBookings();
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } else { $('studentGate').hidden = true; $('bookingView').hidden = true; }
 };
+window.setStudentAuthMode = mode => {
+  const register = mode === 'register';
+  $('studentLoginForm').hidden = register; $('studentRegisterForm').hidden = !register;
+  $('studentLoginTab').classList.toggle('selected', !register); $('studentRegisterTab').classList.toggle('selected', register);
+  $('studentAuthError').textContent = ''; $('studentRegisterError').textContent = '';
+};
+window.studentLogout = async () => {
+  if (REMOTE) await fetch('/api/student/logout', { method: 'POST' }).catch(() => {});
+  studentAuthenticated = false; studentProfile = null; studentBookings = []; remoteAvailability = []; switchMode('student');
+};
+window.registerStudent = async event => {
+  event.preventDefault(); $('studentRegisterError').textContent = '';
+  const password = $('registerPassword').value;
+  if (password !== $('registerPasswordConfirm').value) { $('studentRegisterError').textContent = 'As senhas não coincidem.'; return; }
+  try {
+    const response = await fetch('/api/student/register', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: $('registerEmail').value.trim(), phone: $('registerPhone').value.trim(), password }) });
+    const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Não foi possível criar a conta.');
+    studentProfile = data.student; studentAuthenticated = true; $('studentRegisterForm').reset();
+    await loadStudentSession(); switchMode('student');
+  } catch (error) { $('studentRegisterError').textContent = error.message; }
+};
+window.loginStudent = async event => {
+  event.preventDefault(); $('studentAuthError').textContent = '';
+  try {
+    const response = await fetch('/api/student/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: $('studentLoginEmail').value.trim(), password: $('studentLoginPassword').value }) });
+    const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Não foi possível entrar.');
+    studentProfile = data.student; studentAuthenticated = true; $('studentLoginForm').reset();
+    await loadStudentSession(); switchMode('student');
+  } catch (error) { $('studentAuthError').textContent = error.message; }
+};
+
 window.shareStudentLink = async () => {
   if (!REMOTE) { showToast('O link do aluno estará pronto quando o site estiver publicado.'); return; }
   const link = `${location.origin}${location.pathname}?aluno`;
@@ -201,7 +272,7 @@ window.shareStudentLink = async () => {
 $('studentForm').addEventListener('submit', event => {
   event.preventDefault();
   const id = $('studentId').value;
-  const student = { id: id || crypto.randomUUID(), ...Object.fromEntries(['name', 'phone', 'email', 'plan', 'fee', 'schedule', 'status', 'notes'].map(key => [key, $(key).value.trim()])) };
+  const student = { id: id || crypto.randomUUID(), ...Object.fromEntries(['name', 'phone', 'email', 'plan', 'fee', 'schedule', 'status', 'notes', 'expiresAt'].map(key => [key, $(key).value.trim()])) };
   const index = students.findIndex(item => item.id === id);
   if (index < 0) students.unshift(student); else students[index] = student;
   persist(); closeForm(); showToast(index < 0 ? 'Aluno cadastrado com sucesso.' : 'Cadastro atualizado.');
@@ -230,21 +301,31 @@ $('slotForm').addEventListener('submit', event => {
 });
 $('bookingDate').min = isoToday(); $('bookingDate').value = isoToday();
 $('bookingDate').onchange = () => { selectedSlotId = ''; loadPublicAvailability(); };
-$('studentPhone').oninput = renderMyBookings;
+if ($('studentPhone')) $('studentPhone').oninput = renderMyBookings;
+$('studentLoginForm').addEventListener('submit', loginStudent);
+$('studentRegisterForm').addEventListener('submit', registerStudent);
+$('studentLoginTab').onclick = () => setStudentAuthMode('login');
+$('studentRegisterTab').onclick = () => setStudentAuthMode('register');
+$('studentLogout').onclick = studentLogout;
+$('schoolLoginLink').onclick = () => switchMode('admin');
 $('bookingForm').addEventListener('submit', async event => {
   event.preventDefault();
-  const date = $('bookingDate').value, name = $('studentName').value.trim(), phone = $('studentPhone').value.trim();
+  const date = $('bookingDate').value;
+  const name = $('studentName')?.value.trim() || studentProfile?.name || '';
+  const phone = $('studentPhone')?.value.trim() || '';
+  if (REMOTE && !studentProfile?.active) { showToast(studentProfile?.message || 'Seu plano está inativo.'); return; }
   if (!selectedSlotId) { showToast('Escolha um horário disponível.'); return; }
   if (!date || date < isoToday()) { showToast('Escolha uma data válida.'); return; }
-  if (digits(phone).length < 10) { showToast('Informe um WhatsApp válido.'); return; }
+  if (!REMOTE && digits(phone).length < 10) { showToast('Informe um WhatsApp válido.'); return; }
   const slot = (REMOTE ? remoteAvailability : slots).find(item => item.id === selectedSlotId && item.open !== false);
   if (!slot) { showToast('Este horário não está mais disponível.'); await loadPublicAvailability(); return; }
   let message;
   if (REMOTE) {
-    const response = await fetch('/api/public/bookings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date, slotId: selectedSlotId, name, phone }) });
+    const response = await fetch('/api/student/bookings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date, slotId: selectedSlotId }) });
     const data = await response.json();
     if (!response.ok) { showToast(data.error || 'Não foi possível confirmar a reserva.'); await loadPublicAvailability(); return; }
     message = `Reserva confirmada para ${formatDate(date)}, das ${data.booking.start} às ${data.booking.end}.`;
+    await loadStudentBookings();
   } else {
     const weekday = new Date(date + 'T12:00:00').getDay();
     const used = bookings.filter(item => item.date === date && item.slotId === slot.id).length;
@@ -277,11 +358,16 @@ async function boot() {
     try {
       const sessionResponse = await fetch('/api/session');
       adminAuthenticated = !!(await sessionResponse.json()).authenticated;
-      if (adminAuthenticated) await loadAdminState();
+      if (adminAuthenticated && !studentLink) {
+        await loadAdminState(); switchMode('admin'); return;
+      }
     } catch { adminAuthenticated = false; }
-    if (studentLink || !adminAuthenticated) switchMode('student'); else switchMode('admin');
-  } else if (studentLink) switchMode('student'); else switchMode('admin');
+    await loadStudentSession().catch(() => false);
+    switchMode('student');
+  } else if (studentLink) switchMode('student');
+  else switchMode('admin');
 }
+
 $('today').textContent = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date());
 render(); boot();
 setInterval(() => {

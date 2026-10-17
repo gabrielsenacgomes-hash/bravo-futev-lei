@@ -12,6 +12,7 @@ const DATA_FILE = path.join(DATA_DIR, 'data.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const sessions = new Map();
 const loginAttempts = new Map();
+const studentLoginAttempts = new Map();
 
 if (PASSWORD.length < 12) {
   console.error('Defina ADMIN_PASSWORD com pelo menos 12 caracteres antes de iniciar.');
@@ -22,7 +23,7 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 function readData() {
   try {
     const value = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    return { students: value.students || [], slots: value.slots || [], bookings: value.bookings || [] };
+    return { students: value.students || [], slots: value.slots || [], bookings: value.bookings || [], studentAccounts: value.studentAccounts || [] };
   } catch (err) {
     if (err.code !== 'ENOENT') console.error('Não foi possível ler data.json:', err.message);
     return { students: [], slots: [], bookings: [] };
@@ -40,14 +41,62 @@ function json(res, status, value, headers = {}) {
 function getSession(req) {
   const cookie = req.headers.cookie || '';
   const token = cookie.split(';').map(s => s.trim()).find(s => s.startsWith('bravo_session='))?.slice('bravo_session='.length);
-  const expires = token && sessions.get(token);
-  if (!expires || expires < Date.now()) { if (token) sessions.delete(token); return null; }
-  return token;
+  const session = token && sessions.get(token);
+  if (!session || session.expires < Date.now()) { if (token) sessions.delete(token); return null; }
+  return { ...session, token };
 }
 function requireAdmin(req, res) {
-  if (getSession(req)) return true;
+  const session = getSession(req);
+  if (session?.role === 'admin') return session;
   json(res, 401, { error: 'Entre no painel da escola para continuar.' });
-  return false;
+  return null;
+}
+function requireStudent(req, res) {
+  const session = getSession(req);
+  if (session?.role === 'student') return session;
+  json(res, 401, { error: 'Entre na sua conta para continuar.' });
+  return null;
+}
+function rateLimited(map, ip, max = 8) {
+  const now = Date.now(), attempt = map.get(ip) || { count: 0, start: now };
+  if (now - attempt.start > 10 * 60 * 1000) { attempt.count = 0; attempt.start = now; }
+  if (attempt.count >= max) { map.set(ip, attempt); return true; }
+  attempt.count++; map.set(ip, attempt); return false;
+}
+function normalizeEmail(value) { return String(value || '').trim().toLowerCase(); }
+function validEmail(value) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) && value.length <= 254; }
+function isStudentActive(student) {
+  return student?.status === 'Ativo' && (!student.expiresAt || (dateIsValid(student.expiresAt) && student.expiresAt >= todayInBrazil()));
+}
+function studentStatusMessage(student) {
+  if (student?.expiresAt && dateIsValid(student.expiresAt) && student.expiresAt < todayInBrazil()) {
+    const [year, month, day] = student.expiresAt.split('-');
+    return `Seu plano venceu em ${day}/${month}/${year}. Fale com a equipe da Bravo para renovar e liberar novos treinos.`;
+  }
+  return 'Seu plano está inativo. Fale com a equipe da Bravo para regularizar antes de marcar novos treinos.';
+}
+function studentSummary(student) {
+  const active = isStudentActive(student);
+  return { id: student.id, name: student.name, email: student.email, plan: student.plan, status: student.status,
+    expiresAt: student.expiresAt || '', active, message: active ? '' : studentStatusMessage(student) };
+}
+function setSession(res, req, role, studentId = '') {
+  const token = crypto.randomBytes(32).toString('base64url');
+  sessions.set(token, { expires: Date.now() + 12 * 60 * 60 * 1000, role, studentId });
+  const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
+  return { 'Set-Cookie': `bravo_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200${secure}` };
+}
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  return new Promise((resolve, reject) => crypto.scrypt(password, salt, 64, (err, key) => err ? reject(err) : resolve(`${salt}:${key.toString('hex')}`)));
+}
+function verifyPassword(password, stored) {
+  const [salt, hex] = String(stored || '').split(':');
+  if (!salt || !hex || !/^[a-f0-9]{128}$/i.test(hex)) return Promise.resolve(false);
+  return new Promise((resolve, reject) => crypto.scrypt(password, salt, 64, (err, key) => {
+    if (err) return reject(err);
+    resolve(crypto.timingSafeEqual(key, Buffer.from(hex, 'hex')));
+  }));
 }
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -91,69 +140,130 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const route = url.pathname;
   try {
-    if (req.method === 'GET' && route === '/api/session') return json(res, 200, { authenticated: !!getSession(req) });
+    if (req.method === 'GET' && route === '/api/session') return json(res, 200, { authenticated: getSession(req)?.role === 'admin' });
 
     if (req.method === 'POST' && route === '/api/login') {
       const ip = req.socket.remoteAddress || 'unknown';
-      const attempt = loginAttempts.get(ip) || { count: 0, start: Date.now() };
-      if (Date.now() - attempt.start > 10 * 60 * 1000) { attempt.count = 0; attempt.start = Date.now(); }
-      if (attempt.count >= 8) return json(res, 429, { error: 'Muitas tentativas. Aguarde alguns minutos e tente novamente.' });
+      if (rateLimited(loginAttempts, ip)) return json(res, 429, { error: 'Muitas tentativas. Aguarde alguns minutos e tente novamente.' });
       const body = await readBody(req);
-      if (!constantTimeEqual(body.password || '', PASSWORD)) {
-        attempt.count++; loginAttempts.set(ip, attempt);
-        return json(res, 401, { error: 'Senha incorreta.' });
-      }
+      if (!constantTimeEqual(body.password || '', PASSWORD)) return json(res, 401, { error: 'Senha incorreta.' });
       loginAttempts.delete(ip);
-      const token = crypto.randomBytes(32).toString('base64url');
-      sessions.set(token, Date.now() + 12 * 60 * 60 * 1000);
-      const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
-      return json(res, 200, { authenticated: true }, { 'Set-Cookie': `bravo_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200${secure}` });
+      return json(res, 200, { authenticated: true }, setSession(res, req, 'admin'));
     }
 
     if (req.method === 'POST' && route === '/api/logout') {
-      const token = getSession(req); if (token) sessions.delete(token);
+      const session = getSession(req); if (session) sessions.delete(session.token);
       return json(res, 200, { authenticated: false }, { 'Set-Cookie': 'bravo_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0' });
     }
 
-    if (req.method === 'GET' && route === '/api/public/slots') {
-      const date = url.searchParams.get('date');
-      if (!dateIsValid(date)) return json(res, 400, { error: 'Informe uma data válida.' });
-      const day = new Date(date + 'T12:00:00Z').getUTCDay();
+    if (req.method === 'POST' && route === '/api/student/register') {
+      const ip = req.socket.remoteAddress || 'unknown';
+      if (rateLimited(studentLoginAttempts, ip)) return json(res, 429, { error: 'Muitas tentativas. Aguarde alguns minutos e tente novamente.' });
+      const body = await readBody(req), email = normalizeEmail(body.email), phone = phoneDigits(body.phone);
+      const password = String(body.password || '');
+      if (!validEmail(email) || phone.length < 10 || phone.length > 15 || password.length < 10 || password.length > 200) {
+        return json(res, 400, { error: 'Informe o e-mail, WhatsApp e uma senha com pelo menos 10 caracteres.' });
+      }
       const data = readData();
+      const student = data.students.find(item => normalizeEmail(item.email) === email && phoneDigits(item.phone) === phone);
+      if (!student) return json(res, 403, { error: 'Não encontramos um cadastro com esse e-mail e WhatsApp. Confira os dados ou fale com a equipe da Bravo.' });
+      if (data.studentAccounts.some(account => account.studentId === student.id)) {
+        return json(res, 409, { error: 'Esta conta já foi criada. Entre com seu e-mail e senha.' });
+      }
+      const account = { studentId: student.id, passwordHash: await hashPassword(password) };
+      data.studentAccounts.push(account); saveData(data); studentLoginAttempts.delete(ip);
+      return json(res, 201, { authenticated: true, student: studentSummary(student) }, setSession(res, req, 'student', student.id));
+    }
+
+    if (req.method === 'POST' && route === '/api/student/login') {
+      const ip = req.socket.remoteAddress || 'unknown';
+      if (rateLimited(studentLoginAttempts, ip)) return json(res, 429, { error: 'Muitas tentativas. Aguarde alguns minutos e tente novamente.' });
+      const body = await readBody(req), email = normalizeEmail(body.email), password = String(body.password || '');
+      const data = readData();
+      const student = data.students.find(item => normalizeEmail(item.email) === email);
+      const account = student && data.studentAccounts.find(item => item.studentId === student.id);
+      if (!student || !account || !await verifyPassword(password, account.passwordHash)) {
+        return json(res, 401, { error: 'E-mail ou senha incorretos.' });
+      }
+      studentLoginAttempts.delete(ip);
+      return json(res, 200, { authenticated: true, student: studentSummary(student) }, setSession(res, req, 'student', student.id));
+    }
+
+    if (req.method === 'POST' && route === '/api/student/logout') {
+      const session = getSession(req); if (session?.role === 'student') sessions.delete(session.token);
+      return json(res, 200, { authenticated: false }, { 'Set-Cookie': 'bravo_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0' });
+    }
+
+    if (req.method === 'GET' && route === '/api/student/session') {
+      const session = requireStudent(req, res); if (!session) return;
+      const data = readData(), student = data.students.find(item => item.id === session.studentId);
+      if (!student) return json(res, 401, { error: 'Cadastro não encontrado. Fale com a equipe da Bravo.' });
+      return json(res, 200, { authenticated: true, student: studentSummary(student) });
+    }
+
+    if (req.method === 'GET' && route === '/api/student/bookings') {
+      const session = requireStudent(req, res); if (!session) return;
+      const data = readData(), student = data.students.find(item => item.id === session.studentId);
+      if (!student) return json(res, 401, { error: 'Cadastro não encontrado.' });
+      const bookings = data.bookings.filter(item => item.studentId === student.id || phoneDigits(item.phone) === phoneDigits(student.phone))
+        .filter(item => item.date >= todayInBrazil()).sort((a, b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start));
+      return json(res, 200, { bookings });
+    }
+
+    if (req.method === 'GET' && route === '/api/student/slots') {
+      const session = requireStudent(req, res); if (!session) return;
+      const date = url.searchParams.get('date');
+      if (!dateIsValid(date) || date < todayInBrazil()) return json(res, 400, { error: 'Escolha uma data válida.' });
+      const data = readData(), student = data.students.find(item => item.id === session.studentId);
+      if (!student) return json(res, 401, { error: 'Cadastro não encontrado.' });
+      if (!isStudentActive(student)) return json(res, 403, { code: 'PLAN_INACTIVE', error: studentStatusMessage(student) });
+      const day = new Date(date + 'T12:00:00Z').getUTCDay();
       const available = data.slots.filter(slot => slot.open && Number(slot.day) === day).map(slot => {
         const used = data.bookings.filter(b => b.date === date && b.slotId === slot.id).length;
-        return { ...slot, remaining: Math.max(0, Number(slot.capacity) - used) };
+        return { id: slot.id, day: Number(slot.day), start: slot.start, end: slot.end, capacity: Number(slot.capacity),
+          remaining: Math.max(0, Number(slot.capacity) - used) };
       }).filter(slot => slot.remaining > 0).sort((a, b) => a.start.localeCompare(b.start));
       return json(res, 200, { slots: available });
     }
 
-    if (req.method === 'POST' && route === '/api/public/bookings') {
-      const body = await readBody(req), date = String(body.date || ''), name = String(body.name || '').trim(), phone = String(body.phone || '').trim();
+    if (req.method === 'POST' && route === '/api/student/bookings') {
+      const session = requireStudent(req, res); if (!session) return;
+      const body = await readBody(req), date = String(body.date || '');
       if (!dateIsValid(date) || date < todayInBrazil()) return json(res, 400, { error: 'Escolha uma data válida.' });
-      if (!name || name.length > 120 || phoneDigits(phone).length < 10 || phone.length > 40) return json(res, 400, { error: 'Confira seu nome e WhatsApp.' });
-      const data = readData(), slot = data.slots.find(s => s.id === body.slotId && s.open);
-      if (!slot || Number(slot.day) !== new Date(date + 'T12:00:00Z').getUTCDay()) return json(res, 409, { error: 'Este horário não está mais disponível. Atualize a agenda.' });
-      const sameSlot = data.bookings.filter(b => b.date === date && b.slotId === slot.id);
+      const data = readData(), student = data.students.find(item => item.id === session.studentId);
+      if (!student) return json(res, 401, { error: 'Cadastro não encontrado.' });
+      if (!isStudentActive(student)) return json(res, 403, { code: 'PLAN_INACTIVE', error: studentStatusMessage(student) });
+      const slot = data.slots.find(item => item.id === body.slotId && item.open);
+      if (!slot || Number(slot.day) !== new Date(date + 'T12:00:00Z').getUTCDay()) return json(res, 409, { error: 'Este horário não está mais aberto. Atualize a agenda.' });
+      const sameSlot = data.bookings.filter(item => item.date === date && item.slotId === slot.id);
       if (sameSlot.length >= Number(slot.capacity)) return json(res, 409, { error: 'As vagas deste horário acabaram. Escolha outro.' });
-      if (sameSlot.some(b => phoneDigits(b.phone) === phoneDigits(phone))) return json(res, 409, { error: 'Você já reservou este horário.' });
-      const booking = { id: crypto.randomUUID(), slotId: slot.id, date, start: slot.start, end: slot.end, name, phone };
-      data.bookings.push(booking);
-      if (!data.students.some(s => phoneDigits(s.phone) === phoneDigits(phone))) data.students.unshift({ id: crypto.randomUUID(), name, phone, email: '', plan: 'Aula experimental', fee: '', schedule: `${['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'][slot.day]} · ${slot.start}`, status: 'Experimental', notes: 'Cadastro criado pelo agendamento online' });
-      saveData(data);
+      if (sameSlot.some(item => item.studentId === student.id || phoneDigits(item.phone) === phoneDigits(student.phone))) {
+        return json(res, 409, { error: 'Você já reservou este horário.' });
+      }
+      const booking = { id: crypto.randomUUID(), studentId: student.id, slotId: slot.id, date,
+        start: slot.start, end: slot.end, name: student.name, phone: student.phone };
+      data.bookings.push(booking); saveData(data);
       return json(res, 201, { booking });
     }
 
     if (req.method === 'GET' && route === '/api/admin/state') {
       if (!requireAdmin(req, res)) return;
-      return json(res, 200, readData());
+      const data = readData();
+      return json(res, 200, { ...data, studentAccounts: data.students.map(student => ({ studentId: student.id,
+        hasAccount: data.studentAccounts.some(account => account.studentId === student.id) })) });
     }
     if (req.method === 'PUT' && route === '/api/admin/state') {
       if (!requireAdmin(req, res)) return;
       const body = await readBody(req);
       const data = readData(), students = Array.isArray(body.students) ? body.students : [], slots = Array.isArray(body.slots) ? body.slots : [];
       if (slots.length > 500 || students.length > 20000) return json(res, 400, { error: 'Limite de cadastros excedido.' });
+      if (students.some(student => student.expiresAt && !dateIsValid(student.expiresAt))) return json(res, 400, { error: 'Informe uma data de vencimento válida.' });
+      const emails = students.map(student => normalizeEmail(student.email)).filter(Boolean);
+      if (new Set(emails).size !== emails.length) return json(res, 400, { error: 'Cada aluno precisa ter um e-mail diferente para acessar a própria conta.' });
       if (slots.some(s => !Number.isInteger(Number(s.day)) || Number(s.day) < 0 || Number(s.day) > 6 || !/^\d{2}:\d{2}$/.test(s.start) || !/^\d{2}:\d{2}$/.test(s.end) || s.end <= s.start || !Number.isInteger(Number(s.capacity)) || Number(s.capacity) < 1 || Number(s.capacity) > 30)) return json(res, 400, { error: 'Revise os horários e o número de vagas.' });
       if (overlaps(slots)) return json(res, 400, { error: 'Há horários que se sobrepõem no mesmo dia.' });
+      const studentIds = new Set(students.map(student => student.id));
+      data.studentAccounts = data.studentAccounts.filter(account => studentIds.has(account.studentId));
       saveData({ ...data, students, slots });
       return json(res, 200, { saved: true });
     }
