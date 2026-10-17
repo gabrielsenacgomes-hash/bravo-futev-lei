@@ -11,6 +11,48 @@
 .nav{display:flex;gap:7px}.nav button{border:1px solid transparent;border-radius:10px;padding:9px 13px;background:transparent;color:var(--muted);font:600 12px 'DM Sans';cursor:pointer}.nav button.selected{background:white;color:var(--green);border-color:var(--line)}.top-left{display:flex;align-items:center;gap:28px}.subpanel{margin-top:18px}.schedule-form{display:flex;gap:10px;align-items:end;padding:0 22px 18px;flex-wrap:wrap}.schedule-form .field{min-width:130px}.schedule-form .field label{font-size:11px}.schedule-form .field select,.schedule-form .field input{height:38px}.slot-action{border:1px solid var(--line);border-radius:9px;background:white;padding:7px 10px;font:600 11px 'DM Sans';color:var(--green);cursor:pointer}.slot-action:hover{background:#f0f5eb}.slot-action.danger{color:#a74b43}.slots-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-top:12px}.slot-card{border:1px solid var(--line);border-radius:13px;padding:14px;text-align:left;background:white;cursor:pointer;transition:.15s;color:var(--ink)}.slot-card:hover,.slot-card.chosen{border-color:var(--green);box-shadow:0 0 0 2px #1d5b4310}.slot-card.disabled{opacity:.55;cursor:not-allowed}.slot-card b{font:700 15px Manrope;display:block}.slot-card small{color:var(--muted);font-size:11px;display:block;margin-top:5px}.slot-card .seat{font-size:10px;color:var(--green);font-weight:700;margin-top:10px}.booking-layout{display:grid;grid-template-columns:1.2fr .8fr;gap:18px}.booking-card{padding:22px}.booking-card h2{font:700 18px Manrope;margin:0}.booking-card>p{font-size:13px;color:var(--muted);margin:7px 0 18px}.booking-date{max-width:260px}.booking-list{margin-top:20px}.booking-item{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid #f0f0e9;font-size:12px}.booking-item:last-child{border-bottom:0}.notice{background:#f2f6eb;padding:12px 14px;border-radius:11px;color:#536849;font-size:11px;line-height:1.5;margin-top:16px}.booking-success{display:none;padding:12px;background:#eaf5e9;border-radius:10px;color:#357650;font-size:12px;margin-top:12px}.booking-success.show{display:block}@media(max-width:700px){.booking-layout{grid-template-columns:1fr}.slots-grid{grid-template-columns:repeat(2,1fr)}.top-left{gap:12px}.brand span{display:none}.nav button{padding:8px 9px;font-size:11px}.schedule-form{padding:0 14px 15px}.schedule-form .field{flex:1}}
 .login-modal{width:min(410px,100%)}.login-modal .field{margin-top:18px}.login-error{color:#aa5149;font-size:12px;min-height:18px;margin:8px 0}.nav .logout{color:#a2534b}
 .nav #shareStudent{background:white;color:var(--green);border:1px solid var(--line);margin-left:3px}
+
+/* Área do aluno: experiência dedicada e adaptável a telas pequenas. */
+body:has(#bookingView:not([hidden])){background:radial-gradient(ellipse at 10% 0%,#e5efd8 0,transparent 35%),#f5f6f1}
+body:has(#bookingView:not([hidden])) .shell{max-width:1120px;padding-top:22px}
+body:has(#bookingView:not([hidden])) .top{padding:14px 18px;margin-bottom:22px;background:#fff;border:1px solid #e8e8df;border-radius:16px}
+body:has(#bookingView:not([hidden])) .nav{display:none}
+body:has(#bookingView:not([hidden])) .brand-icon{background:var(--green);box-shadow:0 5px 14px #18352c20}
+body:has(#bookingView:not([hidden])) #bookingView>.hero{position:relative;overflow:hidden;min-height:210px;padding:32px 38px;margin:0 0 18px;border-radius:24px;background:linear-gradient(115deg,#174a36,#26734e);align-items:center}
+body:has(#bookingView:not([hidden])) #bookingView>.hero:after{content:'🏐';position:absolute;right:7%;top:50%;transform:translateY(-50%) rotate(-16deg);font-size:112px;opacity:.14}
+body:has(#bookingView:not([hidden])) #bookingView>.hero>div{position:relative;z-index:1;max-width:600px}
+body:has(#bookingView:not([hidden])) #bookingView>.hero .eyebrow{color:var(--lime);margin-bottom:10px}
+body:has(#bookingView:not([hidden])) #bookingView>.hero h1{color:#fff;letter-spacing:-1.8px}
+body:has(#bookingView:not([hidden])) #bookingView>.hero p.sub{color:#e1eee5;max-width:490px;line-height:1.6}
+body:has(#bookingView:not([hidden])) .booking-layout{grid-template-columns:minmax(0,1.15fr) minmax(310px,.85fr);gap:18px;align-items:start}
+body:has(#bookingView:not([hidden])) .booking-card{padding:24px;border-radius:20px;box-shadow:0 12px 34px #173b2b0a}
+body:has(#bookingView:not([hidden])) .booking-card h2{font-size:18px;letter-spacing:-.35px}
+body:has(#bookingView:not([hidden])) .booking-card>p{line-height:1.55}
+body:has(#bookingView:not([hidden])) .booking-date{max-width:none}
+body:has(#bookingView:not([hidden])) .booking-date input,
+body:has(#bookingView:not([hidden])) #bookingForm .field input{height:45px;border-radius:11px}
+body:has(#bookingView:not([hidden])) .slots-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+body:has(#bookingView:not([hidden])) .slot-card{min-height:98px;padding:15px;border-radius:14px}
+body:has(#bookingView:not([hidden])) .slot-card.chosen{background:#f4f8ed}
+body:has(#bookingView:not([hidden])) .notice{line-height:1.65}
+body:has(#bookingView:not([hidden])) #bookingForm>.btn{min-height:46px;border-radius:11px}
+body:has(#bookingView:not([hidden])) .booking-list{padding-top:4px}
+@media(max-width:760px){
+ body:has(#bookingView:not([hidden])) .shell{padding:14px 14px 34px}
+ body:has(#bookingView:not([hidden])) .top{padding:12px 14px;margin-bottom:14px}
+ body:has(#bookingView:not([hidden])) #bookingView>.hero{min-height:180px;padding:25px 22px;border-radius:19px}
+ body:has(#bookingView:not([hidden])) #bookingView>.hero:after{right:2%;font-size:78px}
+ body:has(#bookingView:not([hidden])) .booking-layout{grid-template-columns:1fr;gap:13px}
+ body:has(#bookingView:not([hidden])) .booking-card{padding:20px}
+}
+@media(max-width:420px){
+ body:has(#bookingView:not([hidden])) .top-note{font-size:11px}
+ body:has(#bookingView:not([hidden])) .brand{font-size:15px}
+ body:has(#bookingView:not([hidden])) .brand-icon{width:36px;height:36px}
+ body:has(#bookingView:not([hidden])) #bookingView>.hero h1{font-size:33px}
+ body:has(#bookingView:not([hidden])) .slots-grid{grid-template-columns:1fr}
+}
+
 </style>
 </head>
 <body>
