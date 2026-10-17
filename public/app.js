@@ -358,13 +358,16 @@ async function boot() {
     try {
       const sessionResponse = await fetch('/api/session');
       adminAuthenticated = !!(await sessionResponse.json()).authenticated;
-      if (adminAuthenticated) await loadAdminState();
+      if (adminAuthenticated && !studentLink) {
+        await loadAdminState(); switchMode('admin'); return;
+      }
     } catch { adminAuthenticated = false; }
-    if (studentLink || !adminAuthenticated) switchMode('student'); else switchMode('admin');
-  } else if (studentLink || !adminAuthenticated) {
-      await loadStudentSession().catch(() => false); switchMode('student');
-    } else switchMode('admin');
+    await loadStudentSession().catch(() => false);
+    switchMode('student');
+  } else if (studentLink) switchMode('student');
+  else switchMode('admin');
 }
+
 $('today').textContent = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date());
 render(); boot();
 setInterval(() => {
