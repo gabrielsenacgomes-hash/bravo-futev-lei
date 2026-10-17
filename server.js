@@ -69,6 +69,7 @@ function isStudentActive(student) {
   return student?.status === 'Ativo' && (!student.expiresAt || (dateIsValid(student.expiresAt) && student.expiresAt >= todayInBrazil()));
 }
 function studentStatusMessage(student) {
+  if (student?.status === 'Inativo' && student?.plan === 'Aguardando ativação') return 'Sua conta foi criada. A equipe da Bravo precisa definir e ativar seu plano para liberar a marcação de treinos.';
   if (student?.expiresAt && dateIsValid(student.expiresAt) && student.expiresAt < todayInBrazil()) {
     const [year, month, day] = student.expiresAt.split('-');
     return `Seu plano venceu em ${day}/${month}/${year}. Fale com a equipe da Bravo para renovar e liberar novos treinos.`;
@@ -159,19 +160,35 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && route === '/api/student/register') {
       const ip = req.socket.remoteAddress || 'unknown';
       if (rateLimited(studentLoginAttempts, ip)) return json(res, 429, { error: 'Muitas tentativas. Aguarde alguns minutos e tente novamente.' });
-      const body = await readBody(req), email = normalizeEmail(body.email), phone = phoneDigits(body.phone);
+      const body = await readBody(req), name = String(body.name || '').trim(), email = normalizeEmail(body.email), phone = phoneDigits(body.phone);
       const password = String(body.password || '');
-      if (!validEmail(email) || phone.length < 10 || phone.length > 15 || password.length < 10 || password.length > 200) {
-        return json(res, 400, { error: 'Informe o e-mail, WhatsApp e uma senha com pelo menos 10 caracteres.' });
+      if (name.length < 2 || name.length > 120 || !validEmail(email) || phone.length < 10 || phone.length > 15 || password.length < 10 || password.length > 200) {
+        return json(res, 400, { error: 'Informe seu nome, e-mail, WhatsApp e uma senha com pelo menos 10 caracteres.' });
       }
       const data = readData();
-      const student = data.students.find(item => normalizeEmail(item.email) === email && phoneDigits(item.phone) === phone);
-      if (!student) return json(res, 403, { error: 'Não encontramos um cadastro com esse e-mail e WhatsApp. Confira os dados ou fale com a equipe da Bravo.' });
-      if (data.studentAccounts.some(account => account.studentId === student.id)) {
+      data.studentAccounts = Array.isArray(data.studentAccounts) ? data.studentAccounts : [];
+      const emailStudent = data.students.find(item => normalizeEmail(item.email) === email);
+      const phoneStudent = data.students.find(item => phoneDigits(item.phone) === phone);
+      if (emailStudent && phoneStudent && emailStudent.id !== phoneStudent.id) {
+        return json(res, 409, { error: 'Este e-mail e este WhatsApp aparecem em cadastros diferentes. Fale com a equipe da Bravo para corrigir seus dados.' });
+      }
+      if ((emailStudent && phoneDigits(emailStudent.phone) !== phone) || (phoneStudent && normalizeEmail(phoneStudent.email) !== email)) {
+        return json(res, 409, { error: 'Já existe um cadastro com parte desses dados. Confira seu e-mail e WhatsApp ou fale com a equipe da Bravo.' });
+      }
+      let student = emailStudent || phoneStudent;
+      if (student && data.studentAccounts.some(account => account.studentId === student.id)) {
         return json(res, 409, { error: 'Esta conta já foi criada. Entre com seu e-mail e senha.' });
       }
+      if (!student) {
+        student = { id: crypto.randomUUID(), name, phone: String(body.phone || '').trim(), email,
+          plan: 'Aguardando ativação', fee: '', schedule: '', expiresAt: '', status: 'Inativo',
+          notes: 'Conta criada pelo aluno; aguardando definição e ativação do plano.' };
+        data.students.unshift(student);
+      }
       const account = { studentId: student.id, passwordHash: await hashPassword(password) };
-      data.studentAccounts.push(account); saveData(data); studentLoginAttempts.delete(ip);
+      data.studentAccounts.push(account);
+      saveData(data);
+      studentLoginAttempts.delete(ip);
       return json(res, 201, { authenticated: true, student: studentSummary(student) }, setSession(res, req, 'student', student.id));
     }
 

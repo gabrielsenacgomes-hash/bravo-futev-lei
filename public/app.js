@@ -245,7 +245,7 @@ window.registerStudent = async event => {
   if (password !== $('registerPasswordConfirm').value) { $('studentRegisterError').textContent = 'As senhas não coincidem.'; return; }
   try {
     const response = await fetch('/api/student/register', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: $('registerEmail').value.trim(), phone: $('registerPhone').value.trim(), password }) });
+      body: JSON.stringify({ name: $('registerName').value.trim(), email: $('registerEmail').value.trim(), phone: $('registerPhone').value.trim(), password }) });
     const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Não foi possível criar a conta.');
     studentProfile = data.student; studentAuthenticated = true; $('studentRegisterForm').reset();
     await loadStudentSession(); switchMode('student');

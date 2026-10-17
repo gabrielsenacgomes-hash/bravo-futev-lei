@@ -4,7 +4,7 @@ Aplicação web para cadastro de alunos, controle de horários e reservas de aul
 
 ## Contas e reservas dos alunos
 
-A equipe cadastra o aluno no painel com nome, WhatsApp, e-mail, status e vencimento do plano. O aluno abre o link da área do aluno e cria a conta usando o mesmo e-mail e WhatsApp registrados pela escola; ele define uma senha com pelo menos 10 caracteres. As senhas são armazenadas com hash seguro no servidor.
+O aluno pode criar a própria conta com nome, e-mail, WhatsApp e senha (mínimo de 10 caracteres). Contas novas entram como **Inativo** e aparecem no painel da escola; a equipe define o plano, o vencimento e ativa o aluno pelo painel. Se já houver um cadastro da escola com o mesmo e-mail e WhatsApp, a conta é vinculada a ele. As senhas são armazenadas com hash seguro no servidor.
 
 Alunos com status **Ativo** e plano ainda válido podem reservar. Alunos inativos ou com o plano vencido continuam podendo entrar para ver o aviso, mas não podem consultar horários disponíveis nem fazer novas reservas. Na área do aluno só aparecem horários que a equipe deixou abertos e que ainda têm vagas. Ainda não há recuperação automática de senha; se esquecer, o aluno deve falar com a equipe da Bravo.
 
