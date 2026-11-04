@@ -5,11 +5,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { reminderConfig, runReminders } = require('./reminders');
+const { createStorage, StorageError } = require('./storage');
 
 const PORT = Number(process.env.PORT || 3000);
 const PASSWORD = process.env.ADMIN_PASSWORD || '';
-const DATA_DIR = process.env.DATA_DIR || __dirname;
-const DATA_FILE = path.join(DATA_DIR, 'data.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const sessions = new Map();
 const loginAttempts = new Map();
@@ -19,22 +18,10 @@ if (PASSWORD.length < 12) {
   console.error('Defina ADMIN_PASSWORD com pelo menos 12 caracteres antes de iniciar.');
   process.exit(1);
 }
-fs.mkdirSync(DATA_DIR, { recursive: true });
+const storage = createStorage();
+const readData = () => storage.readData();
+const saveData = data => storage.saveData(data);
 
-function readData() {
-  try {
-    const value = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    return { students: value.students || [], slots: value.slots || [], bookings: value.bookings || [], studentAccounts: value.studentAccounts || [], reminders: value.reminders || {} };
-  } catch (err) {
-    if (err.code !== 'ENOENT') console.error('Não foi possível ler data.json:', err.message);
-    return { students: [], slots: [], bookings: [], studentAccounts: [], reminders: {} };
-  }
-}
-function saveData(data) {
-  const temp = DATA_FILE + '.tmp';
-  fs.writeFileSync(temp, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600 });
-  fs.renameSync(temp, DATA_FILE);
-}
 function json(res, status, value, headers = {}) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...headers });
   res.end(JSON.stringify(value));
@@ -160,24 +147,33 @@ const server = http.createServer(async (req, res) => {
 
     if (route.startsWith('/api/student/')) return json(res, 404, { error: 'Acesso exclusivo da escola.' });
 
+    if (req.method === 'GET' && route === '/api/admin/storage') {
+      if (!requireAdmin(req, res)) return;
+      await readData();
+      return json(res, 200, { ...storage.info, connected: true });
+    }
+
     if (req.method === 'GET' && route === '/api/admin/reminders') {
       if (!requireAdmin(req, res)) return;
       const config = reminderConfig();
-      return json(res, 200, { ...config, records: Object.values(readData().reminders) });
+      return json(res, 200, { ...config, records: Object.values((await readData()).reminders) });
     }
 
     if (req.method === 'GET' && route === '/api/admin/state') {
       if (!requireAdmin(req, res)) return;
-      const data = readData();
-      return json(res, 200, { ...data, studentAccounts: data.students.map(student => ({ studentId: student.id,
+      const data = await readData();
+      return json(res, 200, { ...data, dataVersion: storage.version(data), studentAccounts: data.students.map(student => ({ studentId: student.id,
         hasAccount: data.studentAccounts.some(account => account.studentId === student.id) })) });
     }
     if (req.method === 'PUT' && route === '/api/admin/state') {
       if (!requireAdmin(req, res)) return;
       const body = await readBody(req);
-      const data = readData(), students = Array.isArray(body.students) ? body.students : [], slots = Array.isArray(body.slots) ? body.slots : data.slots;
+      if (!Array.isArray(body?.students)) return json(res, 400, { error: 'Informe a lista de alunos para salvar.' });
+      const data = await readData();
+      if (body.dataVersion !== undefined && body.dataVersion !== storage.version(data)) return json(res, 409, { error: 'Os cadastros foram atualizados em outra operação. Recarregue a página antes de salvar.' });
+      const students = body.students, slots = Array.isArray(body.slots) ? body.slots : data.slots;
       if (slots.length > 500 || students.length > 20000) return json(res, 400, { error: 'Limite de cadastros excedido.' });
-      if (students.some(student => student.expiresAt && !dateIsValid(student.expiresAt))) return json(res, 400, { error: 'Informe uma data de vencimento válida.' });
+      if (students.some(student => student && student.expiresAt && !dateIsValid(student.expiresAt))) return json(res, 400, { error: 'Informe uma data de vencimento válida.' });
       if (students.some(student => {
         const unchanged = student && data.students.find(existing => existing.id === student.id && JSON.stringify(existing) === JSON.stringify(student));
         if (unchanged) return false;
@@ -188,15 +184,16 @@ const server = http.createServer(async (req, res) => {
       if (overlaps(slots)) return json(res, 400, { error: 'Há horários que se sobrepõem no mesmo dia.' });
       const studentIds = new Set(students.map(student => student.id));
       data.studentAccounts = data.studentAccounts.filter(account => studentIds.has(account.studentId));
-      saveData({ ...data, students, slots });
-      return json(res, 200, { saved: true });
+      const updated = { ...data, students, slots };
+      await saveData(updated);
+      return json(res, 200, { saved: true, dataVersion: storage.version(updated) });
     }
     if (req.method === 'DELETE' && route.startsWith('/api/admin/bookings/')) {
       if (!requireAdmin(req, res)) return;
-      const id = decodeURIComponent(route.slice('/api/admin/bookings/'.length)), data = readData();
+      const id = decodeURIComponent(route.slice('/api/admin/bookings/'.length)), data = await readData();
       const before = data.bookings.length; data.bookings = data.bookings.filter(b => b.id !== id);
       if (before === data.bookings.length) return json(res, 404, { error: 'Reserva não encontrada.' });
-      saveData(data); return json(res, 200, { cancelled: true });
+      await saveData(data); return json(res, 200, { cancelled: true });
     }
 
     if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 404, { error: 'Rota não encontrada.' });
@@ -209,7 +206,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'HEAD') return res.end();
     fs.createReadStream(file).pipe(res);
   } catch (err) {
-    console.error(err);
+    if (err instanceof StorageError) return json(res, err.statusCode, { error: err.message });
+    console.error('Falha ao processar requisição.');
     if (!res.headersSent) json(res, 500, { error: 'Erro interno. Tente novamente.' });
     else res.destroy();
   }

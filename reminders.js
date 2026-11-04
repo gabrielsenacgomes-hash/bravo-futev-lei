@@ -24,9 +24,9 @@ async function runReminders({ readData, saveData, env = process.env, fetchImpl =
   if (!reminderConfig(env).ready) return;
   if (!/^v\d+\.\d+$/.test(env.WHATSAPP_GRAPH_VERSION) || !/^\d+$/.test(env.WHATSAPP_PHONE_NUMBER_ID)) throw new Error('Configuração do WhatsApp inválida.');
   const day = brazilDate(now);
-  const candidates = readData().students.filter(student => student.status === 'Ativo' && /^\d{4}-\d{2}-\d{2}$/.test(student.expiresAt || '') && student.expiresAt < day);
+  const candidates = (await readData()).students.filter(student => student.status === 'Ativo' && /^\d{4}-\d{2}-\d{2}$/.test(student.expiresAt || '') && student.expiresAt < day);
   for (const candidate of candidates) {
-    const data = readData();
+    const data = await readData();
     const student = data.students.find(item => item.id === candidate.id);
     if (!student || student.status !== 'Ativo' || student.expiresAt !== candidate.expiresAt) continue;
     const key = crypto.createHash('sha256').update(`${student.id}:${student.expiresAt}`).digest('hex');
@@ -36,7 +36,7 @@ async function runReminders({ readData, saveData, env = process.env, fetchImpl =
     if (!to) continue;
     // Save before sending: an interrupted request must not trigger duplicate delivery.
     data.reminders[key] = { studentId: student.id, dueDate: student.expiresAt, attemptedAt: now.toISOString(), status: 'pending' };
-    saveData(data);
+    await saveData(data);
     let result;
     try {
       const response = await fetchImpl(`https://graph.facebook.com/${env.WHATSAPP_GRAPH_VERSION}/${env.WHATSAPP_PHONE_NUMBER_ID}/messages`, {
@@ -53,10 +53,10 @@ async function runReminders({ readData, saveData, env = process.env, fetchImpl =
     } catch {
       result = { status: 'unknown' };
     }
-    const latest = readData();
+    const latest = await readData();
     latest.reminders ||= {};
     latest.reminders[key] = { ...data.reminders[key], ...result };
-    saveData(latest);
+    await saveData(latest);
   }
 }
 module.exports = { reminderConfig, runReminders, whatsappPhone };
