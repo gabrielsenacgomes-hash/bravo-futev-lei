@@ -14,7 +14,7 @@ $('total').textContent=students.length;$('active').textContent=active.length;$('
 const list=students.filter(s=>(!query || String(s.name).toLocaleLowerCase('pt-BR').includes(query) || (digits(query) && digits(s.phone).includes(digits(query)))) && (filter==='all' || filter==='active' && s.status==='Ativo' || filter==='inactive' && s.status==='Inativo' || filter==='late' && late(s) || filter==='today' && s.status==='Ativo' && s.expiresAt===day)).sort((a,b)=>String(a.name).localeCompare(String(b.name),'pt-BR'));
 $('rows').innerHTML=list.map(s=>{const overdue=s.expiresAt && s.expiresAt<day;const label=!s.expiresAt?'Sem vencimento':overdue?'Vencida':s.expiresAt===day?'Vence hoje':'A vencer';return `<tr><td><strong>${esc(s.name)}</strong></td><td>${esc(s.phone)}</td><td>${esc(s.plan || '—')}</td><td>${s.fee==='' || s.fee==null?'Não informado':money(s.fee)}</td><td>${dateLabel(s.expiresAt)}</td><td><span class="pill ${overdue?'late':!s.expiresAt?'muted':''}">${label}</span></td><td><span class="pill ${s.status==='Ativo'?'':'muted'}">${esc(s.status || 'Inativo')}</span></td><td><button class="secondary table-action" data-edit="${esc(s.id)}" aria-label="Editar ${esc(s.name)}">Editar</button></td></tr>`;}).join('');$('empty').hidden=list.length>0;$('count').textContent=`${list.length} de ${students.length} alunos`;
 }
-function edit(id){const s=students.find(s=>s.id===id)||{};$('studentForm').reset();$('studentId').value=s.id||'';for(const field of ['name','phone','plan','fee','expiresAt','notes'])$(field).value=s[field]??'';$('status').value=['Ativo','Inativo','Experimental'].includes(s.status)?s.status:'Ativo';$('formTitle').textContent=s.id?'Editar aluno':'Cadastrar aluno';$('formError').textContent='';$('studentDialog').showModal();$('name').focus();}
+function edit(id){const s=students.find(s=>s.id===id)||{};$('studentForm').reset();$('studentId').value=s.id||'';for(const field of ['name','phone','plan','fee','expiresAt','notes'])$(field).value=s[field]??'';$('status').value=['Ativo','Inativo','Experimental'].includes(s.status)?s.status:'Ativo';$('formTitle').textContent=s.id?'Editar aluno':'Cadastrar aluno';$('formError').textContent='';updatePlanOptions();$('studentDialog').showModal();$('name').focus();}
 $('search').addEventListener('input',render);$('filter').addEventListener('change',render);$('newStudent').addEventListener('click',()=>edit());$('cancel').addEventListener('click',()=>$('studentDialog').close());$('rows').addEventListener('click',event=>{const button=event.target.closest('[data-edit]');if(button)edit(button.dataset.edit);});
 $('studentForm').addEventListener('submit',async event=>{event.preventDefault();const phone=digits($('phone').value);if(phone.length<10 || phone.length>15){$('formError').textContent='Informe um telefone com DDD, entre 10 e 15 dígitos.';return;}const id=$('studentId').value || crypto.randomUUID();const original=students.find(s=>s.id===id)||{};const updated={...original,id};for(const field of ['name','phone','plan','expiresAt','status','notes'])updated[field]=$(field).value.trim();updated.fee=Number($('fee').value);const next=students.some(s=>s.id===id)?students.map(s=>s.id===id?updated:s):[...students,updated];$('save').disabled=true;$('formError').textContent='';try{const result=await api('/api/admin/state',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({students:next,dataVersion})});dataVersion=result.dataVersion;students=next;render();$('studentDialog').close();$('notice').textContent='';}catch(error){$('formError').textContent=error.message;}finally{$('save').disabled=false;}});
 $('loginForm').addEventListener('submit',async event=>{event.preventDefault();const button=event.submitter;button.disabled=true;$('loginError').textContent='';try{await api('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:$('password').value})});$('password').value='';await load();}catch(error){$('loginError').textContent=error.message;}finally{button.disabled=false;}});
@@ -39,3 +39,16 @@ async function loadStorage() {
       : 'Armazenamento local: no Render Free, os cadastros podem ser perdidos em reinícios ou atualizações. Conecte o banco externo antes de cadastrar dados reais.';
   } catch (error) { $('storageStatus').textContent = error.message; }
 }
+
+function updatePlanOptions() {
+  for (const button of document.querySelectorAll('[data-plan]')) {
+    button.setAttribute('aria-pressed', String(button.dataset.plan === $('plan').value.trim()));
+  }
+}
+for (const button of document.querySelectorAll('[data-plan]')) {
+  button.addEventListener('click', () => {
+    $('plan').value = button.dataset.plan;
+    updatePlanOptions();
+  });
+}
+$('plan').addEventListener('input', updatePlanOptions);
