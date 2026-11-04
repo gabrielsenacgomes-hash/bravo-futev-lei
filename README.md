@@ -52,3 +52,9 @@ Com as duas variáveis configuradas, o servidor grava exclusivamente no Supabase
 Sem as variáveis, o modo local continua disponível para desenvolvimento. O painel alerta que esse modo não é durável no Render Free. Ao conectar um banco novo, ele começa vazio; não há migração automática do `data.json` antigo. Os testes do banco usam respostas simuladas e não comprovam acesso a um projeto Supabase real.
 
 Os registros de avisos de WhatsApp também ficam no banco externo. O Render Free ainda suspende o servidor, portanto as verificações horárias não acontecem enquanto estiver suspenso.
+
+### Botão de vinculação no painel
+
+Em **Avisos de mensalidade por WhatsApp**, o botão **Vincular WhatsApp da Bravo** abre as instruções para configurar a conta Meta e as variáveis seguras no Render. **Verificar conexão** consulta apenas os dados do número na Cloud API, após autenticação administrativa, sem disparar mensagens. O resultado não expõe o token e não confirma aprovação do modelo ou entrega de avisos.
+
+Esse botão não realiza pareamento por QR code nem substitui o cadastro/configuração de uma conta de WhatsApp Business Platform. A autorização da Meta, a chave do servidor e a aprovação do modelo continuam sendo necessárias. A confirmação do número é consultada novamente quando o administrador pede a verificação; não se presume que uma conexão antiga continua autorizada.

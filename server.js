@@ -4,7 +4,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { reminderConfig, runReminders } = require('./reminders');
+const { reminderConfig, runReminders, verifyWhatsAppConnection } = require('./reminders');
 const { createStorage, StorageError } = require('./storage');
 
 const PORT = Number(process.env.PORT || 3000);
@@ -151,6 +151,11 @@ const server = http.createServer(async (req, res) => {
       if (!requireAdmin(req, res)) return;
       await readData();
       return json(res, 200, { ...storage.info, connected: true });
+    }
+
+    if (req.method === 'POST' && route === '/api/admin/whatsapp/verify') {
+      if (!requireAdmin(req, res)) return;
+      return json(res, 200, await verifyWhatsAppConnection());
     }
 
     if (req.method === 'GET' && route === '/api/admin/reminders') {

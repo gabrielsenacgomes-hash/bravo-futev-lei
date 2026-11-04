@@ -6,7 +6,7 @@ const digits = value => String(value || '').replace(/\D/g, '');
 function today() { const parts = new Intl.DateTimeFormat('en-CA', {timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()); const p=Object.fromEntries(parts.map(x=>[x.type,x.value])); return `${p.year}-${p.month}-${p.day}`; }
 const dateLabel = value => /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value.split('-').reverse().join('/') : 'Não informado';
 let students = [], dataVersion;
-function loginView(){students=[]; $('rows').replaceChildren(); $('dashboard').hidden=true; $('logout').hidden=true; $('loginView').hidden=false; $('loading').hidden=true; $('studentDialog').close();}
+function loginView(){students=[]; $('rows').replaceChildren(); $('dashboard').hidden=true; $('logout').hidden=true; $('loginView').hidden=false; $('loading').hidden=true; $('studentDialog').close();$('whatsappDialog').close();}
 async function api(path, options){const response=await fetch(path,options);const data=await response.json();if(response.status===401){loginView();throw new Error(data.error || 'Entre novamente.');}if(!response.ok)throw new Error(data.error || 'Não foi possível concluir a operação.');return data;}
 async function load(){const data=await api('/api/admin/state');students=data.students || [];dataVersion=data.dataVersion;$('loginView').hidden=true;$('dashboard').hidden=false;$('logout').hidden=false;$('loading').hidden=true;render();await loadStorage();await loadReminders();}
 function render(){const day=today(),query=$('search').value.trim().toLocaleLowerCase('pt-BR'),filter=$('filter').value;const active=students.filter(s=>s.status==='Ativo');const late=s=>s.status==='Ativo' && s.expiresAt && s.expiresAt<day;
@@ -52,3 +52,20 @@ for (const button of document.querySelectorAll('[data-plan]')) {
   });
 }
 $('plan').addEventListener('input', updatePlanOptions);
+
+$('connectWhatsApp').addEventListener('click', () => {
+  $('whatsappConnectionStatus').textContent = '';
+  $('whatsappDialog').showModal();
+});
+$('closeWhatsApp').addEventListener('click', () => $('whatsappDialog').close());
+$('verifyWhatsApp').addEventListener('click', async () => {
+  $('verifyWhatsApp').disabled = true;
+  $('whatsappConnectionStatus').textContent = 'Verificando a conexão com a Meta…';
+  try {
+    const data = await api('/api/admin/whatsapp/verify', { method: 'POST' });
+    $('whatsappConnectionStatus').textContent = data.connected
+      ? `Número conectado: ${data.phone}${data.name ? ' · ' + data.name : ''}. ${data.message}`
+      : data.message;
+  } catch (error) { $('whatsappConnectionStatus').textContent = error.message; }
+  finally { $('verifyWhatsApp').disabled = false; }
+});

@@ -38,3 +38,28 @@ test('Brazilian date and invalid phone are respected', async () => {
   await runReminders(h); assert.deepEqual(h.readData().reminders, {});
   assert.equal(whatsappPhone('123'), null); assert.equal(whatsappPhone('+55 11 99999-9999'), '5511999999999');
 });
+
+test('connection verification queries number without sending messages or returning the token', async () => {
+  const { verifyWhatsAppConnection } = require('../reminders');
+  const result = await verifyWhatsAppConnection({ env, fetchImpl: async (url, options) => {
+    assert.ok(url.endsWith('/123?fields=display_phone_number,verified_name'));
+    assert.equal(options.method, undefined);
+    assert.equal(options.headers.Authorization, 'Bearer test-only');
+    return { ok: true, json: async () => ({ id: '123', display_phone_number: '+55 11 99999-9999', verified_name: 'Bravo' }) };
+  } });
+  assert.equal(result.connected, true);
+  assert.equal(result.name, 'Bravo');
+  assert.ok(!JSON.stringify(result).includes('test-only'));
+});
+test('connection with missing credentials is not described as connected', async () => {
+  const { verifyWhatsAppConnection } = require('../reminders');
+  const result = await verifyWhatsAppConnection({ env: {}, fetchImpl: async () => { throw Error('must not request'); } });
+  assert.equal(result.connected, false); assert.ok(result.missing.includes('WHATSAPP_ACCESS_TOKEN'));
+});
+test('provider denial and network errors do not expose external error bodies', async () => {
+  const { verifyWhatsAppConnection } = require('../reminders');
+  const denied = await verifyWhatsAppConnection({ env, fetchImpl: async () => ({ ok: false, json: async () => ({ secret: 'never-expose' }) }) });
+  assert.equal(denied.connected, false); assert.ok(!JSON.stringify(denied).includes('never-expose'));
+  const offline = await verifyWhatsAppConnection({ env, fetchImpl: async () => { throw Error('private details'); } });
+  assert.equal(offline.connected, false); assert.ok(!JSON.stringify(offline).includes('private details'));
+});

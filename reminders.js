@@ -60,3 +60,19 @@ async function runReminders({ readData, saveData, env = process.env, fetchImpl =
   }
 }
 module.exports = { reminderConfig, runReminders, whatsappPhone };
+
+async function verifyWhatsAppConnection({ env = process.env, fetchImpl = fetch } = {}) {
+  const missing = ['WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_GRAPH_VERSION'].filter(name => !env[name]);
+  if (missing.length) return { connected: false, missing, message: 'A conta ainda não foi configurada. Conclua os passos de conexão abaixo.' };
+  if (!/^v\d+\.\d+$/.test(env.WHATSAPP_GRAPH_VERSION) || !/^\d+$/.test(env.WHATSAPP_PHONE_NUMBER_ID)) return { connected: false, message: 'Confira o identificador do número e a versão da API nas configurações do Render.' };
+  try {
+    const response = await fetchImpl(`https://graph.facebook.com/${env.WHATSAPP_GRAPH_VERSION}/${env.WHATSAPP_PHONE_NUMBER_ID}?fields=display_phone_number,verified_name`, {
+      headers: { Authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}` }, signal: AbortSignal.timeout(15000)
+    });
+    if (!response.ok) return { connected: false, message: 'O WhatsApp não autorizou a consulta. Confira a chave, suas permissões e o identificador do número.' };
+    const data = await response.json();
+    if (!data.id || !data.display_phone_number) return { connected: false, message: 'O WhatsApp não retornou um número válido para esta conta.' };
+    return { connected: true, phone: data.display_phone_number, name: data.verified_name || '', message: 'Número verificado na Meta. Para os avisos automáticos, o modelo de mensagem também precisa estar aprovado e a automação ativada.' };
+  } catch { return { connected: false, message: 'Não foi possível consultar o WhatsApp agora. Tente novamente em instantes.' }; }
+}
+module.exports.verifyWhatsAppConnection = verifyWhatsAppConnection;
